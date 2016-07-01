@@ -1,4 +1,4 @@
-/* 
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
@@ -9,7 +9,7 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License. 
+ * limitations under the License.
  */
 package org.ngrinder.script.controller;
 
@@ -18,12 +18,14 @@ import com.nhncorp.lucy.security.xss.XssPreventer;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
+import org.json.JSONException;
 import org.ngrinder.common.controller.BaseController;
 import org.ngrinder.common.controller.RestAPI;
 import org.ngrinder.common.util.EncodingUtils;
 import org.ngrinder.common.util.HttpContainerContext;
 import org.ngrinder.common.util.PathUtils;
 import org.ngrinder.common.util.UrlUtils;
+import org.ngrinder.common.util.FileUtils;
 import org.ngrinder.infra.spring.RemainedPath;
 import org.ngrinder.model.User;
 import org.ngrinder.script.handler.ProjectHandler;
@@ -119,7 +121,7 @@ public class FileEntryController extends BaseController {
 		String[] parts = StringUtils.split(path, '/');
 		StringBuilder accumulatedPart = new StringBuilder(contextPath).append("/script/list");
 		StringBuilder returnHtml = new StringBuilder().append("<a href='").append(accumulatedPart).append("'>")
-				.append(contextPath).append("/svn/").append(user.getUserId()).append("</a>");
+			.append(contextPath).append("/svn/").append(user.getUserId()).append("</a>");
 		for (String each : parts) {
 			returnHtml.append("/");
 			accumulatedPart.append("/").append(each);
@@ -145,7 +147,7 @@ public class FileEntryController extends BaseController {
 			accumulatedPart.append("/").append(each);
 			if (i != parts.length - 1) {
 				returnHtml.append("<a target='_path_view' href='").append(accumulatedPart).append("'>").append(each)
-						.append("</a>").append("/");
+					.append("</a>").append("/");
 			} else {
 				returnHtml.append(each);
 			}
@@ -204,12 +206,12 @@ public class FileEntryController extends BaseController {
 		if (scriptHandler instanceof ProjectHandler) {
 			if (!fileEntryService.hasFileEntry(user, PathUtils.join(path, fileName))) {
 				fileEntryService.prepareNewEntry(user, path, fileName, name, testUrl, scriptHandler,
-						createLibAndResources, options);
+					createLibAndResources, options);
 				redirectAttributes.addFlashAttribute("message", fileName + " project is created.");
 				return "redirect:/script/list/" + encodePathWithUTF8(path) + "/" + fileName;
 			} else {
 				redirectAttributes.addFlashAttribute("exception", fileName
-						+ " is already existing. Please choose the different name");
+					+ " is already existing. Please choose the different name");
 				return "redirect:/script/list/" + encodePathWithUTF8(path) + "/";
 			}
 
@@ -219,7 +221,7 @@ public class FileEntryController extends BaseController {
 				model.addAttribute("file", fileEntryService.getOne(user, fullPath));
 			} else {
 				model.addAttribute("file", fileEntryService.prepareNewEntry(user, path, fileName, name, testUrl,
-						scriptHandler, createLibAndResources, options));
+					scriptHandler, createLibAndResources, options));
 			}
 		}
 		model.addAttribute("breadcrumbPath", getScriptPathBreadcrumbs(PathUtils.join(path, fileName)));
@@ -272,9 +274,9 @@ public class FileEntryController extends BaseController {
 		response.reset();
 		try {
 			response.addHeader(
-					"Content-Disposition",
-					"attachment;filename="
-							+ java.net.URLEncoder.encode(FilenameUtils.getName(fileEntry.getPath()), "utf8"));
+				"Content-Disposition",
+				"attachment;filename="
+					+ java.net.URLEncoder.encode(FilenameUtils.getName(fileEntry.getPath()), "utf8"));
 		} catch (UnsupportedEncodingException e1) {
 			LOG.error(e1.getMessage(), e1);
 		}
@@ -311,12 +313,12 @@ public class FileEntryController extends BaseController {
 	                     ModelMap model) {
 		final String trimmedQuery = StringUtils.trimToEmpty(query);
 		List<FileEntry> searchResult = newArrayList(filter(fileEntryService.getAll(user),
-				new Predicate<FileEntry>() {
-					@Override
-					public boolean apply(@Nullable FileEntry input) {
-						return input != null && input.getFileType() != FileType.DIR && StringUtils.containsIgnoreCase(new File(input.getPath()).getName(), trimmedQuery);
-					}
-				}));
+			new Predicate<FileEntry>() {
+				@Override
+				public boolean apply(@Nullable FileEntry input) {
+					return input != null && input.getFileType() != FileType.DIR && StringUtils.containsIgnoreCase(new File(input.getPath()).getName(), trimmedQuery);
+				}
+			}));
 		model.addAttribute("query", query);
 		model.addAttribute("files", searchResult);
 		model.addAttribute("currentPath", "");
@@ -449,7 +451,7 @@ public class FileEntryController extends BaseController {
 	public HttpEntity<String> viewOne(User user, @RemainedPath String path) {
 		FileEntry fileEntry = fileEntryService.getOne(user, path, -1L);
 		return toJsonHttpEntity(checkNotNull(fileEntry
-				, "%s file is not viewable", path));
+			, "%s file is not viewable", path));
 	}
 
 	/**
@@ -480,12 +482,12 @@ public class FileEntryController extends BaseController {
 	private List<FileEntry> getAllFiles(User user, String path) {
 		final String trimmedPath = StringUtils.trimToEmpty(path);
 		List<FileEntry> files = newArrayList(filter(fileEntryService.getAll(user),
-				new Predicate<FileEntry>() {
-					@Override
-					public boolean apply(@Nullable FileEntry input) {
-						return input != null && trimPathSeparatorBothSides(getPath(input.getPath())).equals(trimmedPath);
-					}
-				}));
+			new Predicate<FileEntry>() {
+				@Override
+				public boolean apply(@Nullable FileEntry input) {
+					return input != null && trimPathSeparatorBothSides(getPath(input.getPath())).equals(trimmedPath);
+				}
+			}));
 		sort(files, new Comparator<FileEntry>() {
 			@Override
 			public int compare(FileEntry o1, FileEntry o2) {
@@ -532,4 +534,34 @@ public class FileEntryController extends BaseController {
 		fileEntry.setCreatedUser(user);
 		return toJsonHttpEntity(scriptValidationService.validate(user, fileEntry, false, hostString));
 	}
+
+	/**
+	 * Convert the HAR format file with a NGrinder template.
+	 *
+	 * @param file uploadFile
+	 * @param removeIncludeStaticCall remove include Static Calls
+	 * @return Map resultMap
+	 */
+	@RequestMapping(value = "/convert/file", method = RequestMethod.POST)
+	@ResponseBody
+	public Map<String, Object> convertToFile(@RequestParam("uploadFile") MultipartFile file,
+								@RequestParam boolean removeIncludeStaticCall) throws IOException, JSONException {
+		String harContent = FileUtils.getStringToFile(file);
+		return fileEntryService.convertToTemplate(harContent, removeIncludeStaticCall);
+	}
+
+	/**
+	 * Convert textarea string with a NGrinder template.
+	 *
+	 * @param harContent textarea HARContent
+	 * @param removeIncludeStaticCall remove include Static Calls
+	 * @return Map resultMap
+	 */
+	@RequestMapping(value = "/convert/textarea", method = RequestMethod.POST)
+	@ResponseBody
+	public Map<String, Object> convertToTextarea(@RequestParam(value = "harContent", required = true) String harContent,
+								@RequestParam boolean removeIncludeStaticCall) throws JSONException {
+		return fileEntryService.convertToTemplate(harContent, removeIncludeStaticCall);
+	}
+
 }

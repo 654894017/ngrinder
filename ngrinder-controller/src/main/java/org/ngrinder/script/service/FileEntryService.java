@@ -1,4 +1,4 @@
-/* 
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
@@ -9,10 +9,14 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License. 
+ * limitations under the License.
  */
 package org.ngrinder.script.service;
 
+import org.apache.commons.lang3.StringUtils;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.ngrinder.common.util.PathUtils;
 import org.ngrinder.common.util.ThreadUtils;
 import org.ngrinder.common.util.UrlUtils;
@@ -23,6 +27,7 @@ import org.ngrinder.script.handler.ScriptHandler;
 import org.ngrinder.script.handler.ScriptHandlerFactory;
 import org.ngrinder.script.model.FileEntry;
 import org.ngrinder.script.model.FileType;
+import org.ngrinder.script.model.Request;
 import org.ngrinder.script.repository.FileEntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +38,7 @@ import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import org.tmatesoft.svn.core.SVNException;
 import org.tmatesoft.svn.core.SVNURL;
 import org.tmatesoft.svn.core.internal.io.fs.FSHook;
@@ -42,13 +48,13 @@ import org.tmatesoft.svn.core.wc.SVNClientManager;
 import org.tmatesoft.svn.core.wc.SVNRevision;
 
 import javax.annotation.PostConstruct;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static com.google.common.collect.Lists.newArrayList;
 import static java.util.Collections.unmodifiableList;
@@ -60,7 +66,7 @@ import static org.ngrinder.common.util.Preconditions.checkNotNull;
 
 /**
  * File entry service class.
- *
+ * <p>
  * This class is responsible for creating user svn repository whenever a user is
  * created and connect the user to the underlying svn.
  *
@@ -122,7 +128,7 @@ public class FileEntryService {
 
 	/**
 	 * Create user svn repo.
-	 *
+	 * <p>
 	 * This method is executed async way.
 	 *
 	 * @param user newly created user.
@@ -197,7 +203,7 @@ public class FileEntryService {
 
 	/**
 	 * Get single file entity.
-	 *
+	 * <p>
 	 * The return value has content byte.
 	 *
 	 * @param user the user
@@ -239,7 +245,7 @@ public class FileEntryService {
 	/**
 	 * Save File entry.
 	 *
-	 * @param user       the user
+	 * @param user      the user
 	 * @param fileEntry fileEntry to be saved
 	 */
 	public void save(User user, FileEntry fileEntry) {
@@ -332,7 +338,7 @@ public class FileEntryService {
 	 * @return created new {@link FileEntry}
 	 */
 	public FileEntry prepareNewEntryForQuickTest(User user, String url,
-		ScriptHandler scriptHandler) {
+	                                             ScriptHandler scriptHandler) {
 		String path = getPathFromUrl(url);
 		String host = UrlUtils.getHost(url);
 		FileEntry quickTestFile = scriptHandler.getDefaultQuickTestFilePath(path);
@@ -342,7 +348,7 @@ public class FileEntryService {
 			prepareNewEntry(user, pathPart[0], pathPart[1], host, url, scriptHandler, false, nullOptions);
 		} else {
 			FileEntry fileEntry = prepareNewEntry(user, path, quickTestFile.getFileName(), host, url, scriptHandler,
-					false, nullOptions);
+				false, nullOptions);
 			fileEntry.setDescription("Quick test for " + url);
 			save(user, fileEntry);
 		}
@@ -359,7 +365,7 @@ public class FileEntryService {
 	 * @return generated test script
 	 */
 	public String loadTemplate(User user, ScriptHandler handler, String url, String name,
-		String options) {
+	                           String options) {
 		Map<String, Object> map = newHashMap();
 		map.put("url", url);
 		map.put("userName", user.getUserName());
@@ -400,4 +406,163 @@ public class FileEntryService {
 	public ScriptHandler getScriptHandler(String key) {
 		return scriptHandlerFactory.getHandler(key);
 	}
+
+	/**
+	 * jsonFormat String To template.
+	 *
+	 * @param harContent har Content
+	 * @param removeIncludeStaticCall remove Include Static Call
+	 * @return paramMap result Map
+	 * @throws JSONException
+	 */
+	private Map<String, Object> getHARContentToTemplate(String harContent, boolean removeIncludeStaticCall) throws JSONException {
+		Map<String, Object> paramMap = newHashMap();
+		Map<String, Object> commonHeaders = newHashMap();
+		ArrayList<Request> harList = new ArrayList<Request>();
+		JSONObject log = new JSONObject(harContent).getJSONObject("log");
+		JSONArray entries = log.getJSONArray("entries");
+
+		// Set commonHeaders.
+		for (int i = 0; i < entries.length(); i++) {
+			Map<String, Object> header = newHashMap();
+			JSONObject obj = (JSONObject) entries.get(i);
+			JSONObject req = obj.getJSONObject("request");
+			if (removeIncludeStaticCall && !isCheckContentType(obj.getJSONObject("response"))) {
+				continue;
+			}
+
+			if (i > 0) {
+				header = convertMap(req, "headers", i);
+				commonHeaders.entrySet().retainAll(header.entrySet());
+			} else {
+				commonHeaders = convertMap(req, "headers", i);
+			}
+		}
+
+		for (int i = 0; i < entries.length(); i++) {
+			Request request = new Request();
+			Map<String, Object> perRequestHeaders = newHashMap();
+			try {
+				JSONObject obj = (JSONObject) entries.get(i);
+				JSONObject res = obj.getJSONObject("response");
+				JSONObject req = obj.getJSONObject("request");
+
+				if (removeIncludeStaticCall) {
+					if (!isCheckContentType(obj.getJSONObject("response"))) {
+						continue;
+					}
+				}
+				perRequestHeaders = convertMap(req, "headers", i);
+				perRequestHeaders.entrySet().removeAll(commonHeaders.entrySet());
+
+				request.setUrl(req.getString("url"));
+				request.setMethod(req.getString("method"));
+				request.setResponseState(res.getString("status"));
+				request.setQueryString(convertMap(req, "queryString", i));
+				request.setPerRequestHeaders(perRequestHeaders);
+				harList.add(request);
+			} catch (JSONException e) {
+				LOG.error("ERROR HAR2Script getHARContentToTemplate JSONException", e);
+				throw e;
+			}
+		}
+		paramMap.put("request", harList);
+		paramMap.put("commonHeaders", commonHeaders);
+		return paramMap;
+	}
+
+	/**
+	 * append map
+	 *
+	 * @param appendMap
+	 * @param map
+	 */
+	private void appendMap(Map<String, Object> appendMap, Map<String, Object> map) {
+		Iterator<String> keys = map.keySet().iterator();
+		while(keys.hasNext()){
+			String key = keys.next();
+			String value = String.valueOf(map.get(key));
+			if ((!appendMap.containsKey(key)) && (!appendMap.containsValue(value))) {
+				appendMap.put(key, value);
+			}
+		}
+	}
+
+	/**
+	 * convert map to jsonarray
+	 *
+	 * @param map map
+	 * @return JSONArray json array
+	 * @throws JSONException
+	 */
+	private JSONArray convertToJsonArray(Map<String, Object> map) throws JSONException {
+		JSONArray array = new JSONArray();
+		Set key = map.keySet();
+		for (Iterator iterator = key.iterator(); iterator.hasNext();) {
+			String keyName = (String) iterator.next();
+			String valueName = (String) map.get(keyName);
+			JSONObject jsonHeaderObj = new JSONObject();
+			jsonHeaderObj.put("name", keyName);
+			jsonHeaderObj.put("value", valueName);
+			array.put(jsonHeaderObj);
+		}
+		return array;
+	}
+
+	/**
+	 * convert json map.
+	 *
+	 * @param request
+	 * @param name
+	 * @param seq
+	 * @return
+	 * @throws JSONException
+	 */
+	private Map<String, Object> convertMap(JSONObject request, String name, int seq) throws JSONException {
+		JSONArray array = request.getJSONArray(name);
+		Map<String, Object> map = newHashMap();
+		for (int j = 0; j < array.length(); j++){
+			JSONObject obj = (JSONObject) array.get(j);
+			map.put(obj.getString("name"), obj.getString("value"));
+		}
+		return map;
+	}
+
+	/**
+	 * convert HARContent to NGrinder template.
+	 *
+	 * @param harContent HAR content String
+	 * @return resultMap result map
+	 * @throws JSONException
+	 */
+	public Map<String, Object> convertToTemplate(String harContent, boolean removeIncludeStaticCall) throws JSONException {
+		Map<String, Object> resultMap = newHashMap();
+		Map<String, Object> paramMap = newHashMap();
+		paramMap = getHARContentToTemplate(harContent, removeIncludeStaticCall);
+		resultMap.put("groovy", getScriptHandler("groovy").getScriptTemplate(paramMap));
+		resultMap.put("jython", getScriptHandler("jython").getScriptTemplate(paramMap));
+		return resultMap;
+	}
+
+	/**
+	 * contentType check.
+	 *
+	 * @param obj
+	 * @return boolean
+	 * @throws JSONException
+	 */
+	private boolean isCheckContentType(JSONObject obj) throws JSONException {
+		JSONArray array = obj.getJSONArray("headers");
+		for (int a = 0; a < array.length(); a++) {
+			JSONObject header = (JSONObject) array.get(a);
+			if ("Content-Type".equals(header.getString("name"))) {
+				if (StringUtils.startsWith(header.getString("value"),"text") ||
+					StringUtils.startsWith(header.getString("value"),"application")) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 }
